@@ -1,3 +1,6 @@
+"""
+Test GUI for acquiring data from the capillary capacitance sensors. 
+"""
 import sys
 import os
 import os.path
@@ -9,6 +12,8 @@ from PyQt4 import QtCore
 from capsensor_ui import Ui_MainWindow
 from sensor_comm import SensorComm
 from logger import Logger
+from filters import LowpassFilter
+
 
 DEFAULT_LOG_FILE = 'capsense_data.txt'
 TIMER_INTERVAL_MS = 10
@@ -56,14 +61,14 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
         self.serialPortEdit.setText(self.port)
            
         # Setup list view
-        self.horizontalHeaderLabels = ['sample #', 'freq (Hz)', 'value (pF)']
+        self.horizontalHeaderLabels = ['Sample #', 'Freq (Hz)', 'Value (pF)']
         self.numSensors = 4
         self.tableWidget.setRowCount(self.numSensors)
         self.tableWidget.setColumnCount(len(self.horizontalHeaderLabels))
         self.tableWidget.setHorizontalHeaderLabels(self.horizontalHeaderLabels)
         self.sensorLabels = []
         for i in range(0,self.numSensors):
-            self.sensorLabels.append('sensor %d'%(i,))
+            self.sensorLabels.append('Sensor %d'%(i,))
         self.tableWidget.setVerticalHeaderLabels(self.sensorLabels)
 
         # Create table items
@@ -82,18 +87,27 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
 
         # Setup frequency data
         self.lastSampleTime = {}
+        self.freqFilter = {}
+        for i in range(0,self.numSensors):
+            self.freqFilter[i] = LowpassFilter(fc=1.5)
 
         # List of widgets to disable during a run
         self.stopEnabledList = ['startPushButton', 'filePushButton', 'serialPortEdit']
+        self.stopDisabledList = ['stopPushButton']
+
         self.runEnabledList = ['stopPushButton',] 
-        self.initEnalbedList = ['filePushButton', 'serialPortEdit']
+        self.runDisabledList = ['startPushButton', 'filePushButton', 'serialPortEdit']
+
+        self.initDisabledList = ['filePushButton', 'serialPortEdit']
+
+        # Initialize state infromation
         self.running = False
         self.stateLabel.setText('Stopped')
         self.setEnabledForState('Stopped')
 
     def setEnabledForState(self,state):
         if state.lower() == 'running':
-            for name in self.stopEnabledList:
+            for name in self.runDisabledList:
                 widget = getattr(self,name)
                 widget.setEnabled(False)
             for name in self.runEnabledList:
@@ -103,11 +117,11 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
             for name in self.stopEnabledList:
                 widget = getattr(self,name)
                 widget.setEnabled(True)
-            for name in self.runEnabledList:
+            for name in self.stopDisabledList:
                 widget = getattr(self,name)
                 widget.setEnabled(False)
         elif state.lower() == 'initializing':
-            for name in self.initEnalbedList:
+            for name in self.initDisabledList:
                 widget = getattr(self,name)
                 widget.setEnabled(False)
 
@@ -138,23 +152,33 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
                     self.tableItem[(num,2)].setText(valueStr)
                     sampleTime = 1.0e-3*data['time']
                     try:
-                        freq = 1.0/((sampleTime - self.lastSampleTime[num]))
-                        freqStr = '%1.2f'%(freq,)
-                        self.tableItem[(num,1)].setText(freqStr)
+                        dt = sampleTime - self.lastSampleTime[num]
+                        freq = 1.0/(dt)
+                        #freqStr = '%1.2f'%(freq,)
+                        freqFilt = self.freqFilter[num].update(freq,dt)
+                        freqStr = '%1.2f'%(freqFilt,)
                     except KeyError:
+                        self.freqFilter[num].state = 0
+                        freqStr = ''
                         pass
+                    self.tableItem[(num,1)].setText(freqStr)
                     self.lastSampleTime[num] = sampleTime 
 
     def serialPortEdit_Callback(self):
         self.port = str(self.serialPortEdit.text())
 
-
     def startPressed_Callback(self):
         """
         Called before start Clicked
         """
+        # Set initializing text and disable appropriate widgets
         self.stateLabel.setText('Initializing')
         self.setEnabledForState('Initializing')
+
+        # Clear table items
+        for i in range(0,self.numSensors):
+            for j in range(0,len(self.horizontalHeaderLabels)):
+                self.tableItem[(i,j)].setText('')
 
     def startClicked_Callback(self):
 
@@ -176,6 +200,8 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
             self.logger = Logger(self.logPath)
         except IOError, e:
             Qt.Gui.QMessageBox.critical(self,'Error', 'unable to open log file: %s'%(e,))
+            self.stopSensor()
+            return
 
         # Start timer running
         self.running = True
@@ -185,12 +211,7 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
 
     def stopClicked_Callback(self):
         # Close and delete sensor object
-        try:
-            self.sensor.close()
-            del self.sensor
-            self.sensor = None
-        except:
-            pass
+        self.stopSensor()
         
         # Stop timer
         self.timer.stop()
@@ -210,7 +231,6 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
         self.stateLabel.setText('Stopped')
 
     def fileClicked_Callback(self):
-        print 'file pressed'
         filename = QtGui.QFileDialog.getSaveFileName(None,'Select log file',self.lastDir)
         filename = str(filename)
         if filename:
@@ -219,6 +239,14 @@ class CapSensor(QtGui.QMainWindow, Ui_MainWindow):
             #self.statusbar.showMessage('Log File: %s'%(filename,))
             # Set last directory
             self.lastDir =  os.path.split(filename)[0]
+
+    def stopSensor(self):
+        try:
+            self.sensor.close()
+            del self.sensor
+            self.sensor = None
+        except:
+            pass
 
     def main(self):
         self.show()
@@ -229,7 +257,3 @@ if __name__ == '__main__':
     capSensor = CapSensor()
     capSensor.main()
     app.exec_()
-
-
-
-
