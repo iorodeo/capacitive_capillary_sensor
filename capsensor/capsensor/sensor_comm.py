@@ -37,6 +37,17 @@ class SensorComm(serial.Serial):
                 pass
         return data
 
+    def readNumValues(self,num,chan):
+        cnt = 0
+        value_list = []
+        while cnt < num:
+            data = self.readData()
+            if data is not None:
+                if data['type'] == 'sensor':
+                    if data['number'] == chan:
+                        value_list.append(data['value'])
+                        cnt+=1
+        return value_list
 
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
