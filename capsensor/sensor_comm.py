@@ -12,7 +12,7 @@ class SensorComm(serial.Serial):
 
     def __init__(self, port='/dev/ttyUSB1', timeout=0.1):
         super(SensorComm,self).__init__(port=port,timeout=timeout)
-        self.open()
+        #self.open()
         time.sleep(2.0)    # Wait for serial reset
         self.emptyBuffer() # Throw out any garabage in the buffer
         self.sensorCal = SENSORCAL
